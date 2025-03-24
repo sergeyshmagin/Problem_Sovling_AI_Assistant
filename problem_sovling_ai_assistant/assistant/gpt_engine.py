@@ -6,35 +6,26 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-# Загружаем переменные окружения
 load_dotenv()
-
 logger = logging.getLogger(__name__)
 client = OpenAI()
 
-# ID ассистента из .env
 ASSISTANT_ID = os.getenv("OPENAI_ASSISTANT_ID")
-
 if not ASSISTANT_ID:
     raise ValueError("❗ Не указан OPENAI_ASSISTANT_ID в .env")
 
-# Регулярка для валидации ключевого вопроса
+# Шаблон ключевого вопроса
 QUESTION_PATTERN = re.compile(
-    r"Что( именно)? следует сделать [^,]+, чтобы (перейти от [^ ]+ к [^ ]+|понять [^?]+)\??", re.IGNORECASE
+    r"Что( именно)? следует сделать [^,]+, чтобы (перейти от [^ ]+ к [^ ]+|понять [^?]+)\??",
+    re.IGNORECASE
 )
 
 def validate_key_question_format(text: str) -> bool:
-    """
-    Проверяет, соответствует ли ключевой вопрос одному из допустимых шаблонов.
-    """
     if not text:
         return False
     return bool(QUESTION_PATTERN.search(text.strip()))
 
 def try_extract_json(text: str):
-    """
-    Пытается извлечь JSON из текста ответа GPT.
-    """
     try:
         return json.loads(text)
     except json.JSONDecodeError:
@@ -50,27 +41,39 @@ def try_extract_json(text: str):
 def ask_gpt_with_validation(problem_data: dict) -> dict:
     logger.debug("🧼 Старт валидации данных GPT-ассистентом")
 
+    # Автоматическая логическая проверка (например, числовые значения для GAP)
+    r1 = problem_data.get("r1_as_is", "")
+    r2 = problem_data.get("r2_to_be", "")
+    gap = problem_data.get("gap", "")
+
+    numbers_r1 = list(re.findall(r'\d+', r1))
+    numbers_r2 = list(re.findall(r'\d+', r2))
+    if gap and (not numbers_r1 or not numbers_r2):
+        return {
+            "analysis": "GAP указан, но в R1 или R2 отсутствуют числовые значения, на основе которых можно посчитать разрыв.",
+            "key_question": "",
+            "field_comments": {
+                "gap": "Невозможно оценить GAP без числовых значений в R1 и R2. Уточните: укажите, например, '15 дней' и '7 дней'."
+            }
+        }
+
     message = f"""
-Ты — эксперт по проблемному мышлению. Проанализируй следующие поля карточки проблемы и предложи ключевой вопрос по шаблону «Что следует сделать X, чтобы перейти от R1 к R2?» или по одному из 7 шаблонов Барбары Минто.
+Ты — ассистент по проблемному мышлению. Проанализируй поля карточки проблемы. 
 
-Вот входные данные:
+🔍 Дай дидактичные комментарии, объясняющие, **почему** формулировка может быть некорректной — с отсылкой к критериям SMART, MECE, логике R1-R2-GAP.
 
-Кто: {problem_data.get('who')}
-Что: {problem_data.get('what')}
-Где: {problem_data.get('where')}
-Когда: {problem_data.get('when')}
-Почему сейчас: {problem_data.get('why_now')}
-R1: {problem_data.get('r1_as_is')}
-R2: {problem_data.get('r2_to_be')}
-Gap: {problem_data.get('gap')}
-Тип проблемы: {problem_data.get('problem_type')}
+✅ Если поле корректно, просто скажи, что всё хорошо.
 
-Верни ответ в формате JSON строго по этой схеме:
+📌 Если есть недочёты, предложи **конкретные улучшения**. Не пиши просто "размыто" — уточни, что именно улучшить. Например: "Уточните результат: вместо 'улучшить показатели' — 'увеличить экспорт с 5 до 10 млн долларов'".
+
+⚠️ Если хотя бы одно поле некорректно — **не переходи к формулировке ключевого вопроса**. Верни пустую строку в key_question.
+
+Формат ответа — строго JSON:
 {{
-  "analysis": "Анализ проблемы на основе R1, R2, GAP",
-  "key_question": "Корректно сформулированный ключевой вопрос",
+  "analysis": "Общий анализ связности R1, R2, GAP и качества описания",
+  "key_question": "Формулировка ключевого вопроса ИЛИ пусто, если поля некорректны",
   "field_comments": {{
-    "who": "Комментарий к полю 'Кто', если требуется уточнение",
+    "who": "...",
     "what": "...",
     "where": "...",
     "when": "...",
@@ -81,12 +84,23 @@ Gap: {problem_data.get('gap')}
     "problem_type": "..."
   }}
 }}
+
+Данные пользователя:
+
+Кто: {problem_data.get('who')}
+Что: {problem_data.get('what')}
+Где: {problem_data.get('where')}
+Когда: {problem_data.get('when')}
+Почему сейчас: {problem_data.get('why_now')}
+R1: {r1}
+R2: {r2}
+Gap: {gap}
+Тип проблемы: {problem_data.get('problem_type')}
 """
 
     logger.info("🤖 Отправляем данные на анализ GPT")
     thread = client.beta.threads.create()
     thread_id = thread.id
-    logger.info(f"🧵 Thread создан: {thread_id}")
 
     client.beta.threads.messages.create(
         thread_id=thread_id,
@@ -101,7 +115,6 @@ Gap: {problem_data.get('gap')}
 
     logger.info(f"▶️ Assistant run начат: {run.id}")
 
-    # Ждем завершения
     while True:
         run_status = client.beta.threads.runs.retrieve(thread_id=thread_id, run_id=run.id)
         if run_status.status in ["completed", "failed", "cancelled", "expired"]:
@@ -115,10 +128,16 @@ Gap: {problem_data.get('gap')}
     content = ""
 
     for message in reversed(messages.data):
-        if message.role == "assistant":
-            if message.content and message.content[0].type == "text":
-                content = message.content[0].text.value
-                break
+        if message.role == "assistant" and message.content and message.content[0].type == "text":
+            content = message.content[0].text.value
+            break
 
     logger.debug(f"📬 Ответ GPT: {content}")
-    return try_extract_json(content)
+    parsed = try_extract_json(content)
+
+    # Дополнительная валидация ключевого вопроса
+    if parsed.get("key_question") and not validate_key_question_format(parsed["key_question"]):
+        logger.info("⚠️ Ключевой вопрос не соответствует шаблону. Обнуляем.")
+        parsed["key_question"] = ""
+
+    return parsed

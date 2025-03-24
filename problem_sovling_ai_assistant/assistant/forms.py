@@ -2,6 +2,7 @@ from django import forms
 from .models import ProblemCard
 from .gpt_engine import ask_gpt_with_validation
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -38,13 +39,19 @@ class ProblemCardForm(forms.ModelForm):
             'why_now': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'style': 'overflow:hidden; resize:none;'}),
             'r1_as_is': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'style': 'overflow:hidden; resize:none;'}),
             'r2_to_be': forms.Textarea(attrs={'class': 'form-control', 'rows': 3, 'style': 'overflow:hidden; resize:none;'}),
-            'gap': forms.Textarea(attrs={'class': 'form-control', 'rows': 2, 'style': 'overflow:hidden; resize:none;'}),
+            'gap': forms.Textarea(attrs={
+                'class': 'form-control',
+                'readonly': True,
+                'rows': 2,
+                'style': 'overflow:hidden; resize:none;',
+            }),
             'problem_type': forms.Select(attrs={'class': 'form-select'}),
         }
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.field_comments = {}
+        self._added_comments = set()
 
     def clean(self):
         logger.debug("🧼 Старт валидации формы ProblemCardForm")
@@ -63,8 +70,33 @@ class ProblemCardForm(forms.ModelForm):
                 self.add_error(field, "Формулировка слишком общая или неопределённая — уточните.")
 
         if self.errors:
+            logger.info("🚫 Прерываем — есть ошибки, GPT не вызывается")
             return cleaned_data
 
+        # ======== GAP Автозаполнение ========
+        r1 = cleaned_data.get("r1_as_is", "").strip()
+        r2 = cleaned_data.get("r2_to_be", "").strip()
+        r1_match = re.search(r'([\d.,]+)\s*(\w+)?', r1)
+        r2_match = re.search(r'([\d.,]+)\s*(\w+)?', r2)
+
+        if r1_match and r2_match:
+            try:
+                r1_value = float(r1_match.group(1).replace(",", "."))
+                r2_value = float(r2_match.group(1).replace(",", "."))
+                unit = r2_match.group(2) or r1_match.group(2) or "единиц"
+                gap_value = r2_value - r1_value
+
+                if gap_value < 0:
+                    self.add_error('gap', f"⚠ GAP указывает на ухудшение: значение R2 меньше R1 ({abs(int(gap_value))} {unit})")
+                else:
+                    cleaned_data["gap"] = f"{gap_value:.0f} {unit}"
+                    self.data = self.data.copy()
+                    self.data["gap"] = cleaned_data["gap"]
+                    self.fields["gap"].initial = cleaned_data["gap"]
+            except Exception as e:
+                logger.warning("⚠ Ошибка при расчете GAP", exc_info=e)
+
+        # ======== GPT-анализ ========
         try:
             gpt_response = ask_gpt_with_validation(cleaned_data)
         except Exception:
@@ -76,15 +108,24 @@ class ProblemCardForm(forms.ModelForm):
         cleaned_data['gpt_key_question'] = gpt_response.get("key_question", "")
         self.field_comments = gpt_response.get("field_comments", {}) or {}
 
-        for field, comment in self.field_comments.items():
-            if comment.strip() and field in self.fields:
-                self.fields[field].widget.attrs.update({
-                    'class': self.fields[field].widget.attrs.get('class', '') + ' is-gpt-flagged',
-                    'data-gpt-comment': comment
-                })
-                self.add_error(field, comment)
+        # Обработка комментариев GPT, без дублирования
+        for field_name, comment in self.field_comments.items():
+            if field_name == "problem_type" or not comment.strip():
+                continue
 
-        if any(word in cleaned_data['analysis'].lower() for word in ["неясно", "размыто", "недостаточно", "неструктурировано"]):
-            self.add_error(None, f"GPT считает, что описание проблемы недостаточно чёткое:\n\n{cleaned_data['analysis']}")
+            if comment in self._added_comments:
+                continue
+
+            self._added_comments.add(comment)
+            is_error = any(w in comment.lower() for w in ["уточните", "неясно", "недостаточно", "ошибка", "неправильно"])
+            status = 'error' if is_error else 'ok'
+
+            self.fields[field_name].widget.attrs.update({
+                'data-gpt-comment': comment,
+                'data-gpt-status': status
+            })
+
+            if is_error:
+                self.add_error(field_name, comment)
 
         return cleaned_data

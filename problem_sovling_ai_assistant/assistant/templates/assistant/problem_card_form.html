@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% load form_extras %}
+
+{% block content %}
+<div class="card shadow-sm" id="problem-container">
+  <div class="card-body">
+    <h2 class="card-title">Создание карточки проблемы</h2>
+
+    {% if form.non_field_errors %}
+      <div class="alert alert-danger">
+        {% for error in form.non_field_errors %}
+          <div>{{ error }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+
+    <form method="post" class="mt-4" id="problem-form" action="">
+      {% csrf_token %}
+
+      <fieldset class="mb-4">
+        <legend class="h5">🧭 Контекст ситуации</legend>
+        <div class="row g-3">
+          {% for field in form %}
+            {% if field.name|not_in:"gpt_key_question,r1_as_is,r2_to_be,gap,problem_type" %}
+              <div class="col-md-6">
+                <label for="{{ field.id_for_label }}" class="form-label">{{ field.label }}</label>
+                {% if form.is_bound %}
+                  {% if field.errors %}
+                    {{ field|add_class:"form-control is-invalid" }}
+                  {% else %}
+                    {{ field|add_class:"form-control is-valid" }}
+                  {% endif %}
+                {% else %}
+                  {{ field|add_class:"form-control" }}
+                {% endif %}
+                {% if field.help_text %}
+                  <div class="form-text">{{ field.help_text }}</div>
+                {% endif %}
+                {% for error in field.errors %}
+                  <div class="text-danger small">{{ error }}</div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <fieldset class="mb-4">
+        <legend class="h5">🎯 Целевое уточнение (R1 → R2 → GAP)</legend>
+
+        <div class="mb-3">
+          <label for="{{ form.r1_as_is.id_for_label }}" class="form-label">R1: Текущее состояние (as-is)</label>
+          {{ form.r1_as_is|add_class:"form-control" }}
+          {% for error in form.r1_as_is.errors %}
+            <div class="text-danger small">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.r2_to_be.id_for_label }}" class="form-label">R2: Желаемое состояние (to-be)</label>
+          {{ form.r2_to_be|add_class:"form-control" }}
+          {% for error in form.r2_to_be.errors %}
+            <div class="text-danger small">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.gap.id_for_label }}" class="form-label">GAP: Разрыв между текущим и желаемым</label>
+          {{ form.gap|add_class:"form-control" }}
+          {% for error in form.gap.errors %}
+            <div class="text-danger small">{{ error }}</div>
+          {% endfor %}
+        </div>
+
+        <div class="mb-3">
+          <label for="{{ form.problem_type.id_for_label }}" class="form-label">Тип проблемы</label>
+          {{ form.problem_type|add_class:"form-select" }}
+          {% for error in form.problem_type.errors %}
+            <div class="text-danger small">{{ error }}</div>
+          {% endfor %}
+        </div>
+      </fieldset>
+
+      <button type="submit" class="btn btn-primary mt-3 w-100" id="submit-button">
+        🚀 Сформировать ключевой вопрос
+      </button>
+    </form>
+
+    {% if form.cleaned_data.gpt_key_question %}
+      <div class="alert alert-info mt-4">
+        <strong>💡 GPT предлагает ключевой вопрос:</strong><br>
+        <em>{{ form.cleaned_data.gpt_key_question }}</em>
+      </div>
+    {% endif %}
+
+    {% if form.cleaned_data.analysis %}
+      <div class="alert alert-secondary mt-3">
+        <strong>📊 GPT-анализ:</strong><br>
+        <p class="mb-0">{{ form.cleaned_data.analysis }}</p>
+      </div>
+    {% endif %}
+  </div>
+</div>
+
+<script>
+  document.addEventListener("DOMContentLoaded", function () {
+    const textareas = document.querySelectorAll("textarea");
+    textareas.forEach(textarea => {
+      const autoResize = () => {
+        textarea.style.height = "auto";
+        textarea.style.height = textarea.scrollHeight + "px";
+      };
+      textarea.addEventListener("input", autoResize);
+      autoResize(); // инициализация
+    });
+  });
+</script>
+{% endblock %}

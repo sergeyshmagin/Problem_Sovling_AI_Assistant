@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block content %}
+  <div class="card shadow-sm">
+    <div class="card-body">
+      <h2 class="card-title">Карточка проблемы — результат</h2>
+
+      <h5 class="mt-4 text-secondary">🔍 Анализ формулировки</h5>
+      <p class="fst-italic">{{ card.analysis|linebreaks }}</p>
+
+      <h5 class="mt-4 text-secondary">❓ Ключевой вопрос</h5>
+      <blockquote class="blockquote">{{ card.key_question }}</blockquote>
+
+      <hr>
+      <h5 class="text-secondary">📋 Исходные данные</h5>
+      <ul class="list-group">
+        <li class="list-group-item"><strong>Кто:</strong> {{ card.who }}</li>
+        <li class="list-group-item"><strong>Что:</strong> {{ card.what }}</li>
+        <li class="list-group-item"><strong>Где:</strong> {{ card.where }}</li>
+        <li class="list-group-item"><strong>Когда:</strong> {{ card.when }}</li>
+        <li class="list-group-item"><strong>Почему сейчас:</strong> {{ card.why_now }}</li>
+      </ul>
+
+       <a href="{% url 'problem_metrics' card.pk %}" class="btn btn-success mt-3">
+         → Перейти к Этапу 2: Метрики (R1, R2, GAP)
+      </a>
+
+      <a href="{% url 'home' %}" class="btn btn-outline-primary mt-4">← Заполнить новую карточку</a>
+    </div>
+  </div>
+{% endblock %}
